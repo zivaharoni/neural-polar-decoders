@@ -1,0 +1,7 @@
+__pycache__/
+.idea
+results/
+*.pyc
+*.log
+.env
+runfiles/run_npd.sh

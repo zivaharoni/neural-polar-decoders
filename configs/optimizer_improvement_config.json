@@ -1,0 +1,9 @@
+{
+  "learning_rate": 0.0001,
+  "beta_1": 0.9,
+  "beta_2": 0.999,
+  "factor": 0.9,
+  "patience": 5,
+  "min_lr": 1e-5,
+  "mode": "max"
+}

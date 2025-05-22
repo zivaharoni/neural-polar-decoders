@@ -1,0 +1,8 @@
+{
+  "hidden_dim": 64,
+  "embedding_dim": 16,
+  "layers": 2,
+  "activation": "elu",
+  "use_bias": true,
+  "dropout": 0.0
+}

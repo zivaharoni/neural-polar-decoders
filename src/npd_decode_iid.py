@@ -5,15 +5,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import argparse
 import numpy as np
 import tensorflow as tf
+import wandb
+from wandb.integration.keras import WandbMetricsLogger
 from src.channels import AWGN, Ising, BPSK
 from src.polar import PolarEncoder, SCDecoder, PolarCode, SCLDecoder
 from src.generators import info_bits_generator, iid_awgn_generator, iid_ising_generator
 from src.builders import build_neural_polar_decoder_iid_synced
-from src.utils import save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels
+from src.utils import save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels, gpu_init
 
 #%% set configurations
 print(f"TF version: {tf.__version__}")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=filter INFO, 2=filter WARNING, 3=filter ERROR
+gpu_init(allow_growth=True)
 
 eager_mode = False
 if eager_mode:
@@ -54,6 +57,11 @@ os.makedirs(args.save_dir_path, exist_ok=True)
 model_path = os.path.join(args.save_dir_path, 'model', f"{args.save_name}.weights.h5")
 print(f"Model path: {model_path}")
 
+wandb.init(project="npd_publish",
+           entity="data-driven-polar-codes",
+           tags=["decode", "iid"],
+           config=dict(**vars(args),**npd_config))
+
 #%% Print the model configuration
 print_config_summary(vars(args), title="Args")
 print_config_summary(npd_config, title="Neural Polar Decoder")
@@ -89,9 +97,9 @@ construction_dataset = tf.data.Dataset.from_generator(
 
 #%% Evaluate the MI and estimate the synthetic channels
 print("code construction:")
-npd.evaluate(construction_dataset, steps=args.mc_length, verbose=args.verbose)
+npd.evaluate(construction_dataset, steps=args.mc_length, verbose=args.verbose, callbacks=[WandbMetricsLogger()])
 mi = 1.0 - np.mean(npd.synthetic_channel_entropy_metric.result().numpy())
-
+wandb.summary["mi"] = mi
 #%% Visualize the polarization of the synthetic channels
 arr = 1.0 - npd.synthetic_channel_entropy_metric.result()
 visualize_synthetic_channels(arr, args.save_dir_path)
@@ -119,8 +127,11 @@ polar_code = PolarCode(encoder=encoder,
                        decoder=decoder)
 polar_code.compile()
 
-polar_code.evaluate(info_bits_dataset, steps=args.mc_length, verbose=args.verbose)
+polar_code.evaluate(info_bits_dataset, steps=args.mc_length, verbose=args.verbose, callbacks=[WandbMetricsLogger()])
 res_sc = (polar_code.ber_metric.result().numpy(), polar_code.fer_metric.result().numpy())
+wandb.summary["ber_sc"] = res_sc[0]
+wandb.summary["fer_sc"] = res_sc[1]
+
 #%% SCL decoder
 print(f"SCL decoder with list {args.list_num}:")
 decoder = SCLDecoder(npd, list_num=args.list_num)
@@ -128,9 +139,12 @@ polar_code = PolarCode(encoder=encoder,
                        modulator=modulator,
                        channel=channel,
                        decoder=decoder)
+
 polar_code.compile()
-polar_code.evaluate(info_bits_dataset, steps=args.mc_length, verbose=args.verbose)
+polar_code.evaluate(info_bits_dataset, steps=args.mc_length, verbose=args.verbose, callbacks=[WandbMetricsLogger()])
 res_scl = (polar_code.ber_metric.result().numpy(), polar_code.fer_metric.result().numpy())
+wandb.summary["ber_scl"] = res_sc[0]
+wandb.summary["fer_scl"] = res_sc[1]
 
 #%% Save the results
 res_path = os.path.join(args.save_dir_path, f"results.txt")

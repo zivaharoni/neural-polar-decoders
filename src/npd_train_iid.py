@@ -5,16 +5,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import argparse
 import numpy as np
 import tensorflow as tf
-import matplotlib.pyplot as plt
+import wandb
+from wandb.integration.keras import WandbMetricsLogger
 from keras.optimizers import Adam
 from src.generators import iid_awgn_generator, iid_ising_generator
 from src.builders import build_neural_polar_decoder_iid_synced
 from src.callbacks import ReduceLROnPlateauCustom
-from src.utils import save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels
+from src.utils import save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels, gpu_init
 
 #%% set configurations
 print(f"TF version: {tf.__version__}")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+gpu_init(allow_growth=True)
 
 eager_mode = False
 if eager_mode:
@@ -57,6 +59,12 @@ optimizer_config = load_json(args.optimizer_config_path)
 os.makedirs(args.save_dir_path, exist_ok=True)
 os.makedirs( os.path.join(args.save_dir_path, 'model'), exist_ok=True)
 model_path = os.path.join(args.save_dir_path, 'model', f"{args.save_name}.weights.h5")
+print(f"Model path: {model_path}")
+
+wandb.init(project="npd_publish",
+           entity="data-driven-polar-codes",
+           tags=["train", "iid"],
+           config=dict(**vars(args),**npd_config, **optimizer_config))
 
 #%% Print the model configuration
 
@@ -98,11 +106,11 @@ lr_scheduler = ReduceLROnPlateauCustom(monitor='ce', factor=optimizer_config["fa
 history = npd.fit(train_dataset,
                   epochs=args.epochs,
                   steps_per_epoch=args.steps_per_epoch,
-                  callbacks=[lr_scheduler], verbose=args.verbose)
+                  callbacks=[lr_scheduler, WandbMetricsLogger()], verbose=args.verbose)
 print("Training complete.")
 
 #%% MC evaluation of the ce rate
-npd.evaluate(train_dataset, steps=args.mc_length, verbose=args.verbose)
+npd.evaluate(train_dataset, steps=args.mc_length, verbose=args.verbose, callbacks=[WandbMetricsLogger()])
 
 #%% Visualize the polarization of the synthetic channels
 ce = npd.synthetic_channel_entropy_metric.result()

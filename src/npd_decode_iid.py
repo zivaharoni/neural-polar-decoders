@@ -143,8 +143,8 @@ polar_code = PolarCode(encoder=encoder,
 polar_code.compile()
 polar_code.evaluate(info_bits_dataset, steps=args.mc_length, verbose=args.verbose, callbacks=[WandbMetricsLogger()])
 res_scl = (polar_code.ber_metric.result().numpy(), polar_code.fer_metric.result().numpy())
-wandb.summary["ber_scl"] = res_sc[0]
-wandb.summary["fer_scl"] = res_sc[1]
+wandb.summary["ber_scl"] = res_scl[0]
+wandb.summary["fer_scl"] = res_scl[1]
 
 #%% Save the results
 res_path = os.path.join(args.save_dir_path, f"results.txt")

@@ -100,8 +100,7 @@ class NeuralPolarDecoder(Model):
         ce = loss_array[:,-1,:] / tf.math.log(2.0)
         self.synthetic_channel_entropy_metric.update_state(ce)
         res = {'loss': loss / tf.math.log(2.0),
-               'ce': self.synthetic_channel_entropy_metric.result(),
-               'lr': self.optimizer.learning_rate
+               'ce': tf.reduce_mean(self.synthetic_channel_entropy_metric.result())
                }
         return res
 
@@ -111,7 +110,7 @@ class NeuralPolarDecoder(Model):
         ce = loss_array[:,-1,:] / tf.math.log(2.0)
         self.synthetic_channel_entropy_metric.update_state(ce)
         # Return a dict mapping metric names to current value
-        res = {'ce': self.synthetic_channel_entropy_metric.result(),
+        res = {'ce': tf.reduce_mean(self.synthetic_channel_entropy_metric.result()),
                }
         return res
 
@@ -157,9 +156,9 @@ class NeuralPolarDecoderHondaYamamoto(Model):
         self.synthetic_channel_entropy_metric_x.update_state(ce_x)
         self.synthetic_channel_entropy_metric_y.update_state(ce_y)
         res = {'loss': loss / tf.math.log(2.0),
-               'ce_x': tf.reduce_mean(ce_x),
-               'ce_y': tf.reduce_mean(ce_y),
-               'mi': tf.reduce_mean(ce_x - ce_y),
+               'ce_x': tf.reduce_mean(self.synthetic_channel_entropy_metric_x.result()),
+               'ce_y': tf.reduce_mean(self.synthetic_channel_entropy_metric_y.result()),
+               'mi': tf.reduce_mean(self.synthetic_channel_entropy_metric_x.result() - self.synthetic_channel_entropy_metric_y.result()),
                }
         return res
 
@@ -259,9 +258,9 @@ class NeuralPolarDecoderOptimize(Model):
             zip(gradients, self.input_distribution.trainable_weights))
 
         res = {
-            'mi': self.synthetic_channel_entropy_metric_x.result() - self.synthetic_channel_entropy_metric_y.result(),
-            'ce_x': self.synthetic_channel_entropy_metric_x.result(),
-            'ce_y': self.synthetic_channel_entropy_metric_y.result(),
+            'mi': tf.reduce_mean(self.synthetic_channel_entropy_metric_x.result() - self.synthetic_channel_entropy_metric_y.result()),
+            'ce_x': tf.reduce_mean(self.synthetic_channel_entropy_metric_x.result()),
+            'ce_y': tf.reduce_mean(self.synthetic_channel_entropy_metric_y.result()),
             'loss_est': loss_est / tf.math.log(2.0),
             'loss_improve': loss_improve,
         }

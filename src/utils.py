@@ -1,5 +1,6 @@
 import os
 import json
+import wandb
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -63,6 +64,7 @@ def print_config_summary(config, title="Configuration Summary"):
 
 def visualize_synthetic_channels(arr, save_path):
     arr = arr.numpy()
+    fig = plt.figure()
     plt.scatter(np.arange(arr.shape[0]), arr, s=2)  # s is marker size
     plt.xlabel("Channel Index")
     plt.ylabel("$I(U_i; Y^N|U^{i-1})$")
@@ -71,5 +73,19 @@ def visualize_synthetic_channels(arr, save_path):
     # Save plot
     plot_path = os.path.join(save_path, f"synthetic_channels.png")
     plt.savefig(plot_path, bbox_inches='tight')
+    wandb.log({"synthetic_channels": wandb.Image(fig)})
     plt.close()
     print(f"Saved polarization to: {plot_path}")
+
+def gpu_init(allow_growth=True):
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, allow_growth)
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(f"{len(gpus)} Physical GPUs, {len(logical_gpus)} Logical GPUs")
+        except RuntimeError as e:
+            print(e)
+    else:
+        print("No GPU found. Using CPU.")

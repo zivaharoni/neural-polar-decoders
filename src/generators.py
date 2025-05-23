@@ -24,21 +24,11 @@ def iid_ising_generator(batch, N, p=0.5):
         yield x, y
 
 def custom_dataset(batch, N,  encoder, channel, mc_length=1000):
-    # def bit_generator():
-    #     while True:
-    #         yield tf.random.uniform(
-    #             shape=(batch, N,), minval=0, maxval=2, dtype=tf.int32
-    #         )
-    #
-    # input_data = tf.data.Dataset.from_generator(
-    #     bit_generator,
-    #     output_signature=tf.TensorSpec(shape=(batch, N,), dtype=tf.int32)
-    # )
     input_data = tf.data.Dataset.from_tensor_slices(
         tf.random.uniform((batch*mc_length, N, 1), minval=0, maxval=2, dtype=tf.int32)).batch(batch, drop_remainder=True)
 
     def apply_model(b):
-        x, f, u, p_u = encoder(b)
+        x, f, u, p_u, r = encoder(b)
         y = channel(x)
         return x, y
 

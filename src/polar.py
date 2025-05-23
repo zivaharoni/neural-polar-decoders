@@ -42,7 +42,8 @@ class PolarEncoder(Model):
             f = u_random[..., None]
 
         x = self.transform(u)
-        return x, f, u, tf.ones(shape=(batch, self.N, 2))*0.5
+        r = tf.cast(tf.stack((1-u_random, u_random), axis=-1), tf.float32)
+        return x, f, u, tf.ones(shape=(batch, self.N, 2))*0.5, r
 
     @tf.function
     def transform(self, u):
@@ -99,7 +100,7 @@ class SCEncoder(Model):
         batch = info_bits.shape[0]
         info_bits_num = self.info_set.shape[0]
         u_ = 2 * tf.ones(shape=(batch, self.N), dtype=tf.int32)
-
+        r = tf.random.uniform(shape=(batch, self.N), dtype=tf.float32)
         if info_bits_num > 0:
             info_bits = info_bits[:, :info_bits_num]
             batch_range = tf.range(batch, dtype=tf.int32)
@@ -113,7 +114,7 @@ class SCEncoder(Model):
             u_ = tf.tensor_scatter_nd_update(u_, info_indices, updates_info)
             u_ = u_[..., None]
             e = self.decoder.embedding_observations_nn(2 * tf.ones_like(u_))
-            u, x, p_u = self.encode(e, u_, self.N)
+            u, x, p_u = self.encode(e, u_, r, self.N)
             updates_frozen = 2 * tf.ones(shape=(batch * info_bits_num), dtype=tf.int32)
             f = tf.tensor_scatter_nd_update(u[...,0], info_indices, updates_frozen)
             f = f[..., None]
@@ -121,18 +122,16 @@ class SCEncoder(Model):
             u_ = u_[..., None]
 
             e = self.decoder.embedding_observations_nn(2*tf.ones_like(u_))
-            u, x, p_u = self.encode(e, u_, self.N)
+            u, x, p_u = self.encode(e, u_, r, self.N)
             f = u
 
-        return x, f, u, p_u
+        return x, f, u, p_u, r
 
     @tf.function
-    def encode(self, e, f, N, *args):
+    def encode(self, e, f, r, N, *args):
         if N == 1:
             p_uy = self.decoder.emb2llr_nn(e, training=False)
-            cdf = tf.cumsum(p_uy, axis=-1)
-            rv = tf.random.uniform(shape=(e.shape[0], e.shape[1]), dtype=p_uy.dtype)
-            hard_decision = tf.cast(rv > cdf[..., 0], tf.int32)[..., None]
+            hard_decision = tf.cast(r > p_uy[..., 0], tf.int32)[..., None]
             # tf.print(rv, cdf[..., 0])
             # tf.print(cdf.shape)
             # tf.print(rv.shape)
@@ -146,12 +145,15 @@ class SCEncoder(Model):
         e_odd, e_even = self.split_even_odd.call(e)
         f_halves = tf.split(f, num_or_size_splits=2, axis=1)
         f_left, f_right = f_halves
+        r_halves = tf.split(r, num_or_size_splits=2, axis=1)
+        r_left, r_right = r_halves
+
 
         # Compute soft mapping back one stage
         u1est = self.decoder.checknode_nn.call(tf.concat((e_odd, e_even), axis=-1), training=False)
         # u1est = self.layer_norms[layer_norm_pointer](u1est, training=False)
         # R_N^T maps u1est to top polar code
-        uhat1, u1hardprev, p_uy_left = self.encode(u1est, f_left, N // 2)
+        uhat1, u1hardprev, p_uy_left = self.encode(u1est, f_left, r_left, N // 2)
         u_emb = self.decoder.embedding_labels_nn(tf.squeeze(u1hardprev, axis=-1))
 
         # Using u1est and x1hard, we can estimate u2
@@ -159,7 +161,7 @@ class SCEncoder(Model):
         # u2est = self.layer_norms[layer_norm_pointer](u2est, training=False)
 
         # R_N^T maps u2est to bottom polar code
-        uhat2, u2hardprev, p_uy_right = self.encode(u2est, f_right, N // 2)
+        uhat2, u2hardprev, p_uy_right = self.encode(u2est, f_right, r_right, N // 2)
 
         u = tf.concat([uhat1, uhat2], axis=1)
         p_uy = tf.concat([p_uy_left, p_uy_right], axis=1)
@@ -350,6 +352,201 @@ class SCLDecoder(SCDecoder):
         super().build(input_shape)
 
 
+class SCDecoderHY(Model):
+    def __init__(self, encoder, decoder):
+        super(SCDecoderHY, self).__init__()
+
+        self.encoder = encoder
+        self.decoder = decoder
+        self.hard_decision = HardDecSoftmaxLayer()
+        self.interleave = Interleave(axis=1)
+        self.split_even_odd = SplitEvenOdd(axis=1)
+
+    def call(self, inputs, **kwargs):
+        y, f, r  = inputs
+        e_co = self.encoder.embedding_observations_nn(2*tf.ones_like(y), training=False)
+        e_ch = self.decoder.embedding_observations_nn(y, training=False)
+
+        uhat, xhat, llr_u1 = self.decode(e_co, e_ch, f, r, f.shape[1])
+
+        return uhat, llr_u1
+
+    @tf.function
+    def decode(self, e_co, e_ch, f, r, N, *args):
+        if N == 1:
+            p_u = self.encoder.emb2llr_nn(e_co, training=False)
+            p_uy = self.decoder.emb2llr_nn(e_ch, training=False)
+            hard_decision_u = tf.cast(r > p_u[..., 0], tf.int32)[..., None]
+            hard_decision_uy = tf.cast(self.hard_decision.call(p_uy), dtype=tf.int32)
+            u = tf.where(tf.equal(f, 2), hard_decision_uy, hard_decision_u)
+            x = tf.identity(u)
+            return u, x, p_uy
+
+        e_co_odd, e_co_even = self.split_even_odd.call(e_co)
+        e_ch_odd, e_ch_even = self.split_even_odd.call(e_ch)
+        f_halves = tf.split(f, num_or_size_splits=2, axis=1)
+        f_left, f_right = f_halves
+        r_halves = tf.split(r, num_or_size_splits=2, axis=1)
+        r_left, r_right = r_halves
+
+        # Compute soft mapping back one stage
+        u1est_co = self.encoder.checknode_nn.call(tf.concat((e_co_odd, e_co_even), axis=-1), training=False)
+        u1est_ch = self.decoder.checknode_nn.call(tf.concat((e_ch_odd, e_ch_even), axis=-1), training=False)
+        # u1est = self.layer_norms[layer_norm_pointer](u1est, training=False)
+        # R_N^T maps u1est to top polar code
+        uhat1, u1hardprev, p_uy_left = self.decode(u1est_co, u1est_ch, f_left, r_left, N // 2)
+        u_emb = self.decoder.embedding_labels_nn(tf.squeeze(u1hardprev, axis=-1))
+
+        # Using u1est and x1hard, we can estimate u2
+        u2est_co  = self.encoder.bitnode_nn.call(tf.concat((e_co_odd, e_co_even, u_emb), axis=-1), training=False)
+        u2est_ch  = self.decoder.bitnode_nn.call(tf.concat((e_ch_odd, e_ch_even, u_emb), axis=-1), training=False)
+        # u2est = self.layer_norms[layer_norm_pointer](u2est, training=False)
+
+        # R_N^T maps u2est to bottom polar code
+        uhat2, u2hardprev, p_uy_right = self.decode(u2est_co, u2est_ch, f_right, r_right, N // 2)
+
+        u = tf.concat([uhat1, uhat2], axis=1)
+        p_uy = tf.concat([p_uy_left, p_uy_right], axis=1)
+
+        v_xor = tf.math.floormod(u1hardprev + u2hardprev, 2)
+        v_identity = tf.identity(u2hardprev)
+        x = self.interleave.call(tf.concat((v_xor, v_identity), axis=1))
+        return u, x, p_uy
+
+    def build(self, input_shape):
+        super().build(input_shape)
+
+
+class SCLDecoderHY(SCDecoderHY):
+    def __init__(self, encoder, decoder, list_num=4):
+        super(SCLDecoderHY, self).__init__(encoder, decoder)
+
+        self.interleave = Interleave(axis=2)
+        self.split_even_odd = SplitEvenOdd(axis=2)
+        self.list_num = list_num
+        self.eps = 1e-6
+
+    def call(self, inputs, **kwargs):
+        y, f, r  = inputs
+        f = tf.tile(tf.expand_dims(f, 1), [1, self.list_num, 1, 1])
+
+        r = tf.tile(tf.expand_dims(r[...,None], 1), [1, self.list_num, 1, 1])
+
+        e_co = self.encoder.embedding_observations_nn(2*tf.ones_like(y), training=False)
+        e_co = tf.expand_dims(e_co, 1)
+        e_ch = self.decoder.embedding_observations_nn(y, training=False)
+        e_ch = tf.expand_dims(e_ch, 1)
+
+        repmat = tf.tensor_scatter_nd_update(tensor=tf.ones_like(tf.shape(e_ch)),
+                                             indices=tf.constant([[1]]),
+                                             updates=tf.constant([self.list_num]))
+        e_co = tf.tile(e_co, repmat)
+        e_ch = tf.tile(e_ch, repmat)
+
+        maxllr = 10 ** 8
+        pm = tf.concat([tf.zeros([1]), tf.ones([self.list_num - 1]) * float(maxllr)], 0)
+        pm = tf.tile(tf.expand_dims(pm, 0), [f.shape[0], 1])
+        uhat_list, xhat, llr_uy, pm, new_order = self.decode(e_co, e_ch, f, pm,
+                                                                  f.shape[2], r, sample=True)
+
+        uhat = tf.gather(uhat_list, tf.argmin(pm, axis=1), axis=1, batch_dims=1)
+
+
+        return uhat, llr_uy
+
+    @tf.function
+    def decode(self, e_co, e_ch, f, pm, N, r, sample=True, *args):
+
+        nL = e_ch.shape[1]
+        if N == 1:
+            p_u = self.encoder.emb2llr_nn(e_co, training=False)
+            frozen = tf.cast(r > p_u[..., 0:1], tf.int32)
+            # frozen = f
+            dm = self.decoder.emb2llr_nn(e_ch, training=False)
+            # Ensure probabilities are clipped to avoid log(0) or division by zero
+            p1_safe = tf.clip_by_value(dm[..., 1], self.eps, 1 - self.eps)
+            p0_safe = 1.0 - p1_safe
+
+            # Compute the log-likelihood ratio
+            llr = tf.math.log(p1_safe) - tf.math.log(p0_safe)
+            llr = tf.expand_dims(llr, axis=-1)
+            hd_ = tf.squeeze(self.hard_decision.call(dm), axis=(2, 3))
+            hd_ = tf.cast(hd_, dtype=tf.int32)
+
+            hd = tf.concat((hd_, 1 - hd_), axis=1)
+
+            pm_dup = tf.concat((pm, pm + tf.abs(tf.squeeze(llr, axis=(2, 3)))), -1)
+            pm_prune, prune_idx_ = tf.math.top_k(-pm_dup, k=nL, sorted=True)
+            pm_prune = -pm_prune
+            prune_idx = tf.sort(prune_idx_, axis=1)
+            idx = tf.argsort(prune_idx_, axis=1)
+            pm_prune = tf.gather(pm_prune, idx, axis=1, batch_dims=1)
+            u_survived = tf.gather(hd, prune_idx, axis=1, batch_dims=1)[:, :, tf.newaxis, tf.newaxis]
+            # print(u_survived.shape)
+            is_frozen = tf.not_equal(f, 2)
+            x = tf.where(is_frozen, frozen, u_survived)
+            # print(is_frozen.shape, frozen.shape)
+
+            pm_ = tf.where(tf.squeeze(is_frozen, axis=(2, 3)),
+                           pm + tf.abs(tf.squeeze(llr, axis=(2, 3))) *
+                           tf.cast(tf.squeeze(tf.not_equal(tf.expand_dims(tf.expand_dims(hd_, -1), -1), frozen),
+                                              axis=(2, 3)), tf.float32),
+                           pm_prune)
+            new_order = tf.tile(tf.expand_dims(tf.range(nL), 0), [e_ch.shape[0], 1]) \
+                if f[0, 0, 0, 0] != 2 else (prune_idx % nL)
+            return x, tf.identity(x), llr, pm_, new_order
+
+        f_halves = tf.split(f, num_or_size_splits=2, axis=2)
+        f_left, f_right = f_halves
+        r_halves = tf.split(r, num_or_size_splits=2, axis=2)
+        r_left, r_right = r_halves
+
+        e_co_odd, e_co_even = self.split_even_odd.call(e_co)
+        e_ch_odd, e_ch_even = self.split_even_odd.call(e_ch)
+
+        # Compute soft mapping back one stage
+        u1est_co = self.encoder.checknode_nn.call(tf.concat((e_co_odd, e_co_even), axis=-1), training=False)
+        u1est_ch = self.decoder.checknode_nn.call(tf.concat((e_ch_odd, e_ch_even), axis=-1), training=False)
+
+        shape = u1est_ch.shape
+        # ey1est = self.layer_norms[layer_norm_pointer](tf.reshape(ey1est, [-1, shape[-2], shape[-1]]), training=False)
+        # R_N^T maps u1est to top polar code
+        uhat1, u1hardprev, llr_uy_left, pm, new_order = self.decode(u1est_co, u1est_ch, f_left, pm,
+                                                                         N // 2, r_left, sample=sample)
+
+        # Using u1est and x1hard, we can estimate u2
+
+        e_co_odd = tf.gather(e_co_odd, new_order, axis=1, batch_dims=1)
+        e_co_even = tf.gather(e_co_even, new_order, axis=1, batch_dims=1)
+        e_ch_odd = tf.gather(e_ch_odd, new_order, axis=1, batch_dims=1)
+        e_ch_even = tf.gather(e_ch_even, new_order, axis=1, batch_dims=1)
+
+        # Using u1est and x1hard, we can estimate u2
+        u_emb = tf.squeeze(self.decoder.embedding_labels_nn(u1hardprev), axis=-2)
+
+
+        ey2est_co = self.encoder.bitnode_nn.call(tf.concat((e_co_odd, e_co_even, u_emb), axis=-1))
+        ey2est_ch = self.decoder.bitnode_nn.call(tf.concat((e_ch_odd, e_ch_even, u_emb), axis=-1))
+
+
+        # Using u1est and x1hard, we can estimate u2
+        uhat2, u2hardprev, llr_uy_right, pm, new_order2 = self.decode(ey2est_co, ey2est_ch, f_right, pm,
+                                                                           N // 2, r_right, sample=sample)
+        uhat1 = tf.gather(uhat1, new_order2, axis=1, batch_dims=1)
+        llr_uy_left = tf.gather(llr_uy_left, new_order2, axis=1, batch_dims=1)
+        u1hardprev = tf.gather(u1hardprev, new_order2, axis=1, batch_dims=1)
+        new_order = tf.gather(new_order, new_order2, axis=1, batch_dims=1)
+        u = tf.concat([uhat1, uhat2], axis=2)
+        llr_uy = tf.concat([llr_uy_left, llr_uy_right], axis=2)
+        v_xor = tf.math.floormod(u1hardprev + u2hardprev, 2)
+        v_identity = tf.identity(u2hardprev)
+        x = self.interleave.call(tf.concat((v_xor, v_identity), axis=2))
+        return u, x, llr_uy, pm, new_order
+
+    def build(self, input_shape):
+        super().build(input_shape)
+
+
 class PolarCode(Model):
     def __init__(self, encoder, modulator, channel, decoder):
         super(PolarCode, self).__init__()
@@ -363,15 +560,10 @@ class PolarCode(Model):
 
     def call(self, inputs, **kwargs):
         info_bits = inputs
-        x, f, u, p_u = self.encoder(info_bits)
+        x, f, u, p_u, r = self.encoder(info_bits)
         c = self.modulator(x)
         y = self.channel(c)
         uhat, llr_u1 = self.decoder((y, f))
-        # llr_u = tf.where(tf.equal(u, 1), llr_u1[:,1], llr_u1[:,0])
-        # log_pu = tf.math.log(tf.math.sigmoid(llr_u) + 1e-10)
-        # tf.print("dec: ", tf.reduce_mean(-log_pu))
-        # tf.print("===============")
-        # tf.print( tf.stack((f[0,...,0],u[0,...,0],uhat[0,...,0]), axis=0), summarize=-1)
         return uhat, u
 
     @tf.function
@@ -394,86 +586,15 @@ class PolarCode(Model):
     def build(self, input_shape):
         super().build(input_shape)
 
-    # @tf.function
-    # def decode_list(self, ey, f, pm, N, r, sample=True, , *args):
-    #     # layer_norm_pointer = int(np.log2(self.block_length / N))
-    #     nL = ey.shape[1]
-    #     if N == 1:
-    #         frozen = f
-    #         # print(f.shape)
-    #
-    #         dm = self.emb2llr.call(ey)
-    #
-    #         # E0nsure probabilities are clipped to avoid log(0) or division by zero
-    #         p1_safe = tf.clip_by_value(dm[..., 1], self.eps, 1 - self.eps)
-    #         p0_safe = 1.0 - p1_safe #tf.clip_by_value(dm[..., 0], epsilon, 1 - epsilon)
-    #
-    #         # Compute the log-likelihood ratio
-    #         llr = tf.math.log(p1_safe) - tf.math.log(p0_safe)
-    #         llr = tf.expand_dims(llr, axis=-1)
-    #         hd_ = tf.squeeze(self.hard_decision.call(dm), axis=(2, 3))
-    #         # print(hd_.shape)
-    #
-    #         hd = tf.concat((hd_, 1 - hd_), axis=1)
-    #         # print(hd.shape)
-    #
-    #         pm_dup = tf.concat((pm, pm + tf.abs(tf.squeeze(llr, axis=(2, 3)))), -1)
-    #         pm_prune, prune_idx_ = tf.math.top_k(-pm_dup, k=nL, sorted=True)
-    #         pm_prune = -pm_prune
-    #         prune_idx = tf.sort(prune_idx_, axis=1)
-    #         idx = tf.argsort(prune_idx_, axis=1)
-    #         pm_prune = tf.gather(pm_prune, idx, axis=1, batch_dims=1)
-    #         u_survived = tf.gather(hd, prune_idx, axis=1, batch_dims=1)[:, :, tf.newaxis, tf.newaxis]
-    #         # print(u_survived.shape)
-    #         is_frozen = tf.not_equal(f, 0.5)
-    #         x = tf.where(is_frozen, frozen, u_survived)
-    #         # print(is_frozen.shape, frozen.shape)
-    #
-    #         pm_ = tf.where(tf.squeeze(is_frozen, axis=(2, 3)),
-    #                        pm + tf.abs(tf.squeeze(llr, axis=(2, 3))) *
-    #                        tf.cast(tf.squeeze(tf.not_equal(tf.expand_dims(tf.expand_dims(hd_, -1), -1), frozen),
-    #                                           axis=(2, 3)), tf.float32),
-    #                        pm_prune)
-    #         new_order = tf.tile(tf.expand_dims(tf.range(nL), 0), [ey.shape[0], 1]) \
-    #             if f[0, 0, 0, 0] != 0.5 else (prune_idx % nL)
-    #         return x, tf.identity(x), llr, pm_, new_order
-    #
-    #     f_halves = tf.split(f, num_or_size_splits=2, axis=2)
-    #     f_left, f_right = f_halves
-    #     r_halves = tf.split(r, num_or_size_splits=2, axis=2)
-    #     r_left, r_right = r_halves
-    #
-    #     ey_odd, ey_even = self.split_even_odd_list.call(ey)
-    #
-    #     # Compute soft mapping back one stage
-    #     ey1est = self.checknode.call((ey_odd, ey_even))
-    #     shape = ey1est.shape
-    #     # ey1est = self.layer_norms[layer_norm_pointer](tf.reshape(ey1est, [-1, shape[-2], shape[-1]]), training=False)
-    #     ey1est = tf.reshape(ey1est, shape)
-    #     # R_N^T maps u1est to top polar code
-    #     uhat1, u1hardprev, llr_uy_left, pm, new_order = self.decode_list(ey1est, f_left, pm,
-    #                                                                      N // 2, r_left, sample=sample)
-    #
-    #     # Using u1est and x1hard, we can estimate u2
-    #
-    #     ey_odd = tf.gather(ey_odd, new_order, axis=1, batch_dims=1)
-    #     ey_even = tf.gather(ey_even, new_order, axis=1, batch_dims=1)
-    #
-    #     # Using u1est and x1hard, we can estimate u2
-    #     u_emb = tf.squeeze(self.UEmbedding(u1hardprev), axis=-2)
-    #     ey2est = self.bitnode.call((ey_odd, ey_even, u_emb))
-    #     # ey2est = self.layer_norms[layer_norm_pointer](tf.reshape(ey2est, [-1, shape[-2], shape[-1]]), training=False)
-    #     # ey2est = tf.reshape(ey2est, shape)
-    #
-    #     # Using u1est and x1hard, we can estimate u2
-    #     uhat2, u2hardprev, llr_uy_right, pm, new_order2 = self.decode_list(ey2est, f_right, pm,
-    #                                                                        N // 2, r_right, sample=sample)
-    #     uhat1 = tf.gather(uhat1, new_order2, axis=1, batch_dims=1)
-    #     llr_uy_left = tf.gather(llr_uy_left, new_order2, axis=1, batch_dims=1)
-    #     u1hardprev = tf.gather(u1hardprev, new_order2, axis=1, batch_dims=1)
-    #     new_order = tf.gather(new_order, new_order2, axis=1, batch_dims=1)
-    #     u = tf.concat([uhat1, uhat2], axis=2)
-    #     llr_uy = tf.concat([llr_uy_left, llr_uy_right], axis=2)
-    #     x = self.f2_list.call((u1hardprev, u2hardprev))
-    #     x = self.interleave_list.call(x)
-    #     return u, x, llr_uy, pm, new_order
+
+class PolarCodeHY(PolarCode):
+    def __init__(self, encoder, modulator, channel, decoder):
+        super(PolarCodeHY, self).__init__(encoder, modulator, channel, decoder)
+
+    def call(self, inputs, **kwargs):
+        info_bits = inputs
+        x, f, u, p_u, r = self.encoder(info_bits)
+        c = self.modulator(x)
+        y = self.channel(c)
+        uhat, llr_u1 = self.decoder((y, f, r))
+        return uhat, u

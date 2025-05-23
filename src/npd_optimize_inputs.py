@@ -3,21 +3,22 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import argparse
-import numpy as np
 import tensorflow as tf
+import wandb
+from wandb.integration.keras import WandbMetricsLogger
 from keras.optimizers import Adam
-from src.generators import info_bits_generator, custom_dataset
-from src.polar import SCEncoder
+from src.generators import info_bits_generator
 from src.models import NeuralPolarDecoderHondaYamamoto
 from src.builders import build_neural_polar_decoder_hy_synced_optimize
 from src.callbacks import ReduceLROnPlateauCustom
-from src.utils import save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels
+from src.utils import (save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels,
+                       gpu_init, safe_wandb_init)
 from src.channels import Ising
 
 #%% set configurations
 print(f"TF version: {tf.__version__}")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=filter INFO, 2=filter WARNING, 3=filter ERROR
-
+gpu_init(allow_growth=True)
 eager_mode = False
 if eager_mode:
     print("Running in eager mode")
@@ -63,6 +64,11 @@ os.makedirs( os.path.join(args.save_dir_path, 'model'), exist_ok=True)
 model_full_path = os.path.join(args.save_dir_path, 'model', f"{args.save_name}_full.weights.h5")
 model_path = os.path.join(args.save_dir_path, 'model', f"{args.save_name}.weights.h5")
 print(f"Model path: {model_path}")
+
+safe_wandb_init(project="npd_publish",
+                entity="data-driven-polar-codes",
+                tags=["train", "optimized"],
+                config=dict(**vars(args),**npd_config))
 
 #%% Print the model configuration
 
@@ -115,7 +121,7 @@ lr_scheduler_improve = ReduceLROnPlateauCustom(monitor='mi',
 history = npd.fit(train_dataset,
                   epochs=args.epochs,
                   steps_per_epoch=args.steps_per_epoch,
-                  callbacks=[lr_scheduler_est, lr_scheduler_improve], verbose=args.verbose)
+                  callbacks=[lr_scheduler_est, lr_scheduler_improve, WandbMetricsLogger()], verbose=args.verbose)
 
 #%% Save all weights, including the auxiliary RNN input
 os.makedirs(os.path.dirname(model_full_path), exist_ok=True)

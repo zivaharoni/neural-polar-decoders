@@ -11,11 +11,12 @@ from src.channels import AWGN, Ising, BPSK
 from src.polar import PolarEncoder, SCDecoder, PolarCode, SCLDecoder
 from src.generators import info_bits_generator, iid_awgn_generator, iid_ising_generator
 from src.builders import build_neural_polar_decoder_iid_synced
-from src.utils import save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels, gpu_init
+from src.utils import (save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels,
+                       gpu_init, safe_wandb_init)
 
 #%% set configurations
 print(f"TF version: {tf.__version__}")
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=filter INFO, 2=filter WARNING, 3=filter ERROR
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 gpu_init(allow_growth=True)
 
 eager_mode = False
@@ -57,10 +58,10 @@ os.makedirs(args.save_dir_path, exist_ok=True)
 model_path = os.path.join(args.save_dir_path, 'model', f"{args.save_name}.weights.h5")
 print(f"Model path: {model_path}")
 
-wandb.init(project="npd_publish",
-           entity="data-driven-polar-codes",
-           tags=["decode", "iid"],
-           config=dict(**vars(args),**npd_config))
+safe_wandb_init(project="npd_publish",
+                entity="data-driven-polar-codes",
+                tags=["decode", "iid"],
+                config=dict(**vars(args),**npd_config))
 
 #%% Print the model configuration
 print_config_summary(vars(args), title="Args")

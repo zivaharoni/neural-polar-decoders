@@ -89,3 +89,10 @@ def gpu_init(allow_growth=True):
             print(e)
     else:
         print("No GPU found. Using CPU.")
+
+def safe_wandb_init(project, **kwargs):
+    try:
+        return wandb.init(project=project, **kwargs)
+    except Exception as e:
+        print(f"wandb.init failed with error: {e}. Running in disabled mode.")
+        return wandb.init(project=project, mode="disabled", **kwargs)

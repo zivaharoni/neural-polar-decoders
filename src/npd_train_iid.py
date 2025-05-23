@@ -11,7 +11,8 @@ from keras.optimizers import Adam
 from src.generators import iid_awgn_generator, iid_ising_generator
 from src.builders import build_neural_polar_decoder_iid_synced
 from src.callbacks import ReduceLROnPlateauCustom
-from src.utils import save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels, gpu_init
+from src.utils import (save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels,
+                       gpu_init, safe_wandb_init)
 
 #%% set configurations
 print(f"TF version: {tf.__version__}")
@@ -61,10 +62,10 @@ os.makedirs( os.path.join(args.save_dir_path, 'model'), exist_ok=True)
 model_path = os.path.join(args.save_dir_path, 'model', f"{args.save_name}.weights.h5")
 print(f"Model path: {model_path}")
 
-wandb.init(project="npd_publish",
-           entity="data-driven-polar-codes",
-           tags=["train", "iid"],
-           config=dict(**vars(args),**npd_config, **optimizer_config))
+safe_wandb_init(project="npd_publish",
+                entity="data-driven-polar-codes",
+                tags=["train", "iid"],
+                config=dict(**vars(args),**npd_config, **optimizer_config))
 
 #%% Print the model configuration
 

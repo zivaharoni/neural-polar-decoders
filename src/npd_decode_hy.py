@@ -5,16 +5,19 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import argparse
 import numpy as np
 import tensorflow as tf
-from src.polar import SCEncoder, SCDecoder, PolarCode, SCLDecoder
+import wandb
+from wandb.integration.keras import WandbMetricsLogger
+from src.polar import SCEncoder, SCDecoderHY, PolarCodeHY, SCLDecoderHY
 from src.channels import Ising
 from src.generators import info_bits_generator,  custom_dataset
 from src.builders import build_neural_polar_decoder_hy_synced
-from src.utils import save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels
+from src.utils import (save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels,
+                       gpu_init, safe_wandb_init)
 
 #%% set configurations
 print(f"TF version: {tf.__version__}")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=filter INFO, 2=filter WARNING, 3=filter ERROR
-
+gpu_init(allow_growth=True)
 eager_mode = False
 if eager_mode:
     print("Running in eager mode")
@@ -52,6 +55,11 @@ os.makedirs(args.save_dir_path, exist_ok=True)
 model_path = os.path.join(args.save_dir_path, 'model', f"{args.save_name}.weights.h5")
 print(f"Model path: {model_path}")
 
+safe_wandb_init(project="npd_publish",
+                entity="data-driven-polar-codes",
+                tags=["decode", "optimized"],
+                config=dict(**vars(args),**npd_config))
+
 #%% Print the model configuration
 print_config_summary(vars(args), title="Args")
 print_config_summary(npd_config, title="Neural Polar Decoder")
@@ -76,7 +84,7 @@ eval_dataset = custom_dataset(args.batch, args.N, encoder, channel)
 
 #%% Evaluate the MI and estimate the synthetic channels
 print("code construction:")
-npd.evaluate(eval_dataset, steps=args.mc_length, verbose=args.verbose)
+npd.evaluate(eval_dataset, steps=args.mc_length, verbose=args.verbose, callbacks=[WandbMetricsLogger()])
 mi = np.mean(npd.synthetic_channel_entropy_metric_x.result().numpy() - npd.synthetic_channel_entropy_metric_y.result().numpy())
 print(f"Mutual Information: {mi:.6f}")
 
@@ -100,25 +108,25 @@ info_bits_dataset = tf.data.Dataset.from_generator(
 #%% SC decoder
 print("SC decoder:")
 encoder = SCEncoder(sorted_reliabilities, info_bits_num=info_bits_num, decoder=npd.npd_const)
-decoder = SCDecoder(npd.npd_channel)
-polar_code = PolarCode(encoder=encoder,
+decoder = SCDecoderHY(npd.npd_const,npd.npd_channel)
+polar_code = PolarCodeHY(encoder=encoder,
                        modulator=tf.identity,
                        channel=channel,
                        decoder=decoder)
 polar_code.compile()
-polar_code.evaluate(info_bits_dataset, steps=args.mc_length, verbose=args.verbose)
+polar_code.evaluate(info_bits_dataset, steps=args.mc_length, verbose=args.verbose, callbacks=[WandbMetricsLogger()])
 
 res_sc = (polar_code.ber_metric.result().numpy(), polar_code.fer_metric.result().numpy())
 
 #%% SCL decoder
 print(f"SCL decoder with list {args.list_num}:")
-decoder = SCLDecoder(npd.npd_channel, list_num=args.list_num)
-polar_code = PolarCode(encoder=encoder,
-                       modulator=tf.identity,
-                       channel=channel,
-                       decoder=decoder)
+decoder = SCLDecoderHY(npd.npd_const, npd.npd_channel, list_num=args.list_num)
+polar_code = PolarCodeHY(encoder=encoder,
+                         modulator=tf.identity,
+                         channel=channel,
+                         decoder=decoder)
 polar_code.compile()
-polar_code.evaluate(info_bits_dataset, steps=args.mc_length, verbose=args.verbose)
+polar_code.evaluate(info_bits_dataset, steps=args.mc_length, verbose=args.verbose, callbacks=[WandbMetricsLogger()])
 res_scl = (polar_code.ber_metric.result().numpy(), polar_code.fer_metric.result().numpy())
 
 #%% Save the results

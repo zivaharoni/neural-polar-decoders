@@ -249,7 +249,7 @@ class NeuralPolarDecoderOptimize(Model):
 
             llr_x = tf.where(tf.equal(x, 1), llr_x1, -llr_x1)
             log_px = tf.math.log(tf.math.sigmoid(llr_x) + 1e-10)
-            log_px_N = tf.reduce_mean(log_px, axis=(1, 2))
+            log_px_N = tf.reduce_sum(log_px, axis=(1, 2))
             loss_improve = tf.reduce_mean(-tf.stop_gradient(reward) * log_px_N)
 
         gradients = tape.gradient(loss_improve, self.input_distribution.trainable_weights)

@@ -1,7 +1,11 @@
 __pycache__/
 .idea
+.vscode/
 results/
+wandb/
 *.pyc
 *.log
 .env
 runfiles/run_npd.sh
+runfiles/run_tests.sh
+notes.txt

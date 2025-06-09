@@ -78,7 +78,7 @@ pip install -r requirements.txt
 
 Train an NPD and evaluate on the Ising channel with code rate 0.4 and list size 8:
 ```bash
-bash ./runfiles/train-and-evaluate-iid-inputs.sh --channel ising --N 32 --batch 256 --model_size small --epochs 100	\
+bash ./runfiles/train-and-evaluate-iid-inputs.sh --channel ising --N 1024 --batch 256 --model_size small --epochs 100	\
   --steps_per_epoch 1000 --mc_length 10000 --code_rate 0.4 --list_num 32
 ```
 
@@ -87,8 +87,8 @@ bash ./runfiles/train-and-evaluate-iid-inputs.sh --channel ising --N 32 --batch 
 
 Train and evaluate an NPD on the Ising channel:
 ```bash
-bash ./runfiles/train-and-evaluate-npd-optimize-inputs.sh --channel ising --N 32 --batch 256 --model_size small \
-  --epochs 1000	--steps_per_epoch 1000 --mc_length 10000 --code_rate 0.4 --list_num 32
+bash ./runfiles/train-and-evaluate-optimize-inputs.sh --channel ising --N 1024 --batch 256 --model_size small \
+  --epochs 1000	--steps_per_epoch 1000 --mc_length 10000 --code_rate 0.4 --list_num 32 --threshold 0.0
 ```
 
 Model and logs are saved under:
@@ -102,19 +102,16 @@ results/<save_dir>/<timestamp>/
 
 **Hyperparameters**
 
-|  N   | MC length | Batch | Model Size | Epochs | Steps/Epoch | Code Rate | List Size |
-|:----:|:---------:|:-----:|:----------:|:------:|:-----------:|:---------:|:---------:|
-|  32  |   10000   |  256  |   small    |  100   |    1000     |    0.4    |    32     |
-| 1024 |   10000   |  256  |   small    |  1000  |    1000     |    0.4    |    32     |
+|  N   | MC length | Batch | Model Size | Epochs | Steps/Epoch | Code Rate | List Size | Threshold |
+|:----:|:---------:|:-----:|:----------:|:------:|:-----------:|:---------:|:---------:|:---------:|
+| 1024 |   10000   |  256  |   small    |  1000  |    1000     |    0.4    |    256    |   0.25    |
 
 **Results**
 
-| Input Distribution |  N   |   MI    | SC BER | SC FER | SCL BER | SCL FER |
-|:------------------:|:----:|:-------:|:------:|:------:|:-------:|:-------:|
-|        iid         |  32  | 0.44189 | 0.0838 | 0.1933 | 0.0615  | 0.1477  |
-|        iid         | 1024 | 0.4502  | 0.2031 | 0.6257 | 0.0258  | 0.1900  |
-|     optimized      |  32  | 0.5373  | 0.0492 | 0.1218 | 0.0216  | 0.0744  |
-|     optimized      | 1024 | 0.5429  | 0.2177 | 0.6396 | 0.0045  | 0.0491  |
+| Input Distribution |  N   |   MI    | SC FER | SCL FER |
+|:------------------:|:----:|:-------:|:------:|:-------:|
+|        iid         | 1024 | 0.4502  | 0.648  | 0.1900  |
+|     optimized      | 1024 | 0.541  | 0.908  | 0.023   |
 
 
 ## Notes

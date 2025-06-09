@@ -1,5 +1,5 @@
 {
-  "learning_rate": 0.001,
+  "learning_rate": 0.0005,
   "beta_1": 0.9,
   "beta_2": 0.999,
   "factor": 0.9,

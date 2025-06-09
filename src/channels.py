@@ -29,6 +29,6 @@ class Ising(Layer):
         x = inputs
         s0 = tf.random.uniform(shape=(x.shape[0], 1, 1), minval=0, maxval=2, dtype=tf.int32)
         s = tf.concat([s0, x[:, :-1, :]], axis=1)
-        noise = tf.random.uniform(shape=(x.shape[0], x.shape[1], 1), minval=0, maxval=2, dtype=tf.int32)
+        noise = tf.random.uniform(shape=tf.shape(x), minval=0, maxval=2, dtype=tf.int32)
         y = tf.where(tf.equal(noise, 0), x, s)
         return y

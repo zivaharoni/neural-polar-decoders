@@ -16,6 +16,8 @@ while [[ "$#" -gt 0 ]]; do
     --verbose) VERBOSE="$2"; shift ;;
     --code_rate) CODE_RATE="$2"; shift ;;
     --list_num) LIST_NUM="$2"; shift ;;
+    --load_path) LOAD_PATH="$2"; shift ;;
+    --threshold) THRESHOLD="$2"; shift ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
@@ -34,6 +36,8 @@ SAVE_NAME="${SAVE_NAME:-model}"
 VERBOSE="${VERBOSE:-2}"
 CODE_RATE="${CODE_RATE:-0.4}"
 LIST_NUM="${LIST_NUM:-8}"
+LOAD_PATH="${LOAD_PATH:-}"
+THRESHOLD="${THRESHOLD:-}"
 
 RUN_NAME="${NAME}-optimize-${MODEL_SIZE}-${CHANNEL}-batch-${BATCH}-N-${N}"
 OPTIMIZER_ESTIMATION_CONFIG_PATH="configs/optimizer_config.json"
@@ -61,8 +65,7 @@ python src/npd_optimize_inputs.py \
     --npd_config_path "$NPD_CONFIG_PATH" \
     --optimizer_estimation_config_path "$OPTIMIZER_ESTIMATION_CONFIG_PATH" \
     --optimizer_improvement_config_path "$OPTIMIZER_IMPROVEMENT_CONFIG_PATH" \
-    --verbose "$VERBOSE" \
-    2>&1 | tee "$LOG_FILE"
+    --verbose "$VERBOSE" 
 
 # Evaluation
 echo "Starting evaluation..."
@@ -76,11 +79,12 @@ python src/npd_decode_hy.py \
     --batch "$BATCH" \
     --N "$N" \
     --mc_length "$MC_LENGTH" \
-    --save_name "$SAVE_NAME" \
+    --threshold "$THRESHOLD" \
     --save_dir_path "$OUTPUT_DIR" \
     --code_rate "$CODE_RATE" \
     --list_num "$LIST_NUM" \
     --npd_config_path "$NPD_CONFIG_PATH" \
+    --load_path "$OUTPUT_DIR/model/model.weights.h5" \
     --verbose "$VERBOSE" \
     2>&1 | tee "$LOG_FILE"
 

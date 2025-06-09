@@ -21,7 +21,8 @@ def build_neural_polar_decoder(config):
     emb2llr_nn = Embedding2Prob()
     embedding_labels_nn = Embedding(input_dim=2,
                                     output_dim=config["embedding_dim"],
-                                    trainable=True)
+                                    trainable=True,
+                                    name="symbol_embedding")
     return checknode_nn, bitnode_nn, emb2llr_nn, embedding_labels_nn
 
 def build_neural_polar_decoder_iid_synced(config, input_shape, load_path=None):
@@ -79,7 +80,7 @@ def build_neural_polar_decoder_hy_synced(config, input_shape, load_path=None):
     if load_path is not None:
         try:
             model([tf.zeros(shape, dtype=tf.int32) for shape in input_shape])
-            model.load_weights(load_path)
+            model.load_weights(load_path, skip_mismatch=True)
             print(f"Loaded weights from {load_path}")
         except Exception as e:
             print(e)
@@ -117,7 +118,8 @@ def build_neural_polar_decoder_hy_synced_optimize(config, input_shape, channel, 
 
     if load_path is not None:
         try:
-            model.load_weights(load_path, by_name=True)
+            model(tf.zeros(input_shape, dtype=tf.int32))
+            model.load_weights(load_path)
             print(f"Loaded weights from {load_path}")
         except Exception as e:
             print(e)

@@ -25,7 +25,7 @@ def iid_ising_generator(batch, N, p=0.5):
 
 def custom_dataset(batch, N,  encoder, channel, mc_length=1000):
     input_data = tf.data.Dataset.from_tensor_slices(
-        tf.random.uniform((batch*mc_length, N, 1), minval=0, maxval=2, dtype=tf.int32)).batch(batch, drop_remainder=True)
+        tf.random.uniform((batch*mc_length, N), minval=0, maxval=2, dtype=tf.int32)).batch(batch, drop_remainder=True)
 
     def apply_model(b):
         x, f, u, p_u, r = encoder(b)

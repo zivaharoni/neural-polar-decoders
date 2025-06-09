@@ -20,13 +20,13 @@ class NeuralPolarDecoder(Model):
         self.embedding_labels_nn = embedding_labels_nn
         self.interleave = Interleave(axis=1)
         self.split_even_odd = SplitEvenOdd(axis=1)
+        self.eps = 1e-6
 
         self.loss_fn = SparseCategoricalCrossentropy(from_logits=False, reduction=tf.keras.losses.Reduction.NONE)
         if build_metrics:
             self.synthetic_channel_entropy_metric = MeanTensor(name="synthetic_channel_entropy")
 
     def call(self, inputs, training=False, **kwargs):
-        # x is the true channel inputs and y is the channel outputs
         x, y = inputs
         tf.debugging.assert_rank(x, 3)
         tf.debugging.assert_rank(y, 3)
@@ -34,58 +34,127 @@ class NeuralPolarDecoder(Model):
         v = tf.cast(x, tf.int32)
         e = self.embedding_observations_nn(y)
 
-        batch, N, d = e.shape
         loss_array = list()
         norm_array = list()
         pred_array = list()
-        pred = self.emb2llr_nn.call(e, training=training)
-        # pred = tf.clip_by_value(pred, self.eps, 1 - self.eps)
-        loss = self.loss_fn(v, pred)
-        norms = tf.norm(e, ord='euclidean', axis=-1)
-        loss_array.append(loss)
-        pred_array.append(pred)
-        norm_array.append(norms)
 
-        scope = 2
-        # iterate over decoding stage
-        while scope <= N:
+        V = list([v])
+        E = list([e])
 
-            # compute the bits in the next stage
-            v_scoped = tf.split(v, num_or_size_splits=N // scope, axis=1)
-            # for i, item in enumerate(v_scoped):
-            #     tf.print(f"v_scoped[{i}].shape:", tf.shape(item))
-            # tf.print("=" * 20)
-            v_interleaved = tf.concat([self.interleave(item) for item in v_scoped], axis=1)
-            v_odd, v_even = self.split_even_odd.call(v_interleaved)
+        depth = e.shape[1]
+        num_of_splits = 1
+        while depth > 1:
+            V_1 = list([])
+            V_2 = list([])
+            E_1 = list([])
+            E_2 = list([])
+            # print(depth)
+            for v, e in zip(V, E):
+                # compute bits amd embeddings in next layer
+                v_odd, v_even = self.split_even_odd.call(v)
+                V_1.append(v_odd)
+                V_2.append(v_even)
+                e_odd, e_even = self.split_even_odd.call(e)
+                E_1.append(e_odd)
+                E_2.append(e_even)
 
-            v_xor = tf.math.floormod(v_odd + v_even, 2)
-            v_identity = tf.identity(v_even)
-            v_prime = self.interleave(tf.concat((v_xor, v_identity), axis=1))
+            V_odd = tf.concat(V_1, axis=1)
+            V_even = tf.concat(V_2, axis=1)
+            v_xor = tf.math.floormod(V_odd + V_even, 2)
+            V_xor = tf.split(v_xor, num_or_size_splits=2 ** (num_of_splits - 1), axis=1)
+            V_identity = tf.split(V_even, num_or_size_splits=2 ** (num_of_splits - 1), axis=1)
 
-            # compute the embeddings in the next stage
-            e_scoped = tf.split(e, num_or_size_splits=N // scope, axis=1)
-            e_interleaved = tf.concat([self.interleave(item) for item in e_scoped], axis=1)
-            e_odd, e_even = self.split_even_odd.call(e_interleaved)
+            v = tf.concat([elem for pair in zip(V_xor, V_identity) for elem in pair], axis=1)
+            V_ = tf.split(v, num_or_size_splits=2 ** num_of_splits, axis=1)
+            E_odd = tf.concat(E_1, axis=1)
+            E_even = tf.concat(E_2, axis=1)
+            # V_left = tf.concat(V_[::2], axis=1)
+            V_left = self.embedding_labels_nn(tf.squeeze(v_xor, axis=-1))
+            e1_left = self.checknode_nn.call(tf.concat((E_odd, E_even), axis=-1))
+            e1_right = self.bitnode_nn.call(tf.concat((E_odd, E_even, V_left), axis=-1))
+            E1_left = tf.split(e1_left, num_or_size_splits=2 ** (num_of_splits - 1), axis=1)
+            E1_right = tf.split(e1_right, num_or_size_splits=2 ** (num_of_splits - 1), axis=1)
+            e_lr = tf.concat([elem for pair in zip(E1_left, E1_right) for elem in pair], axis=1)
 
-            v_xor_emb = self.embedding_labels_nn(tf.squeeze(v_xor, axis=-1))
-            e1_left = self.checknode_nn.call(tf.concat((e_odd, e_even), axis=-1), training=training)
-            e1_right = self.bitnode_nn.call(tf.concat((e_odd, e_even, v_xor_emb), axis=-1), training=training)
-            e_prime = self.interleave(tf.concat((e1_left, e1_right), axis=1))
+            E_ = tf.split(e_lr, num_or_size_splits=2 ** num_of_splits, axis=1)
 
 
-            # compute loss and metrics
-            pred = self.emb2llr_nn.call(e_prime, training=training)
-            loss = self.loss_fn(v_prime, pred)
-            norms = tf.norm(e_prime, ord='euclidean', axis=-1)
-
-            loss_array.append(loss)
-            pred_array.append(pred)
+            pred_ = self.emb2llr_nn.__call__(tf.concat(E_, axis=1))
+            loss_ = self.loss_fn(tf.concat(V_, axis=1), pred_)
+            # loss = tf.expand_dims(tf.reduce_sum(loss_, axis=0), axis=-1)
+            norms = tf.norm(e, ord='euclidean', axis=-1)
+            loss_array.append(loss_)
+            pred_array.append(pred_)
             norm_array.append(norms)
+            V = V_
+            E = E_
 
-            v = v_prime
-            e = e_prime
-            scope *= 2
-        return tf.stack(loss_array, axis=-2), tf.stack(pred_array, axis=-2), tf.stack(norm_array, axis=-2)
+            depth //= 2
+            num_of_splits += 1
+        return tf.stack(loss_array, axis=-2), tf.stack(pred_array, axis=-2), tf.stack(pred_array, axis=-2)
+
+    # def call(self, inputs, training=False, **kwargs):
+    #     # x is the true channel inputs and y is the channel outputs
+    #     x, y = inputs
+    #     tf.debugging.assert_rank(x, 3)
+    #     tf.debugging.assert_rank(y, 3)
+
+    #     v = tf.cast(x, tf.int32)
+    #     e = self.embedding_observations_nn(y)
+
+    #     batch, N, d = e.shape
+    #     loss_array = list()
+    #     norm_array = list()
+    #     pred_array = list()
+    #     pred = self.emb2llr_nn.call(e, training=training)
+    #     pred = tf.clip_by_value(pred, self.eps, 1 - self.eps)
+    #     loss = self.loss_fn(v, pred)
+    #     norms = tf.norm(e, ord='euclidean', axis=-1)
+    #     loss_array.append(loss)
+    #     pred_array.append(pred)
+    #     norm_array.append(norms)
+
+    #     scope = 2
+    #     # iterate over decoding stage
+    #     while scope <= N:
+
+    #         # compute the bits in the next stage
+    #         v_scoped = tf.split(v, num_or_size_splits=N // scope, axis=1)
+    #         # for i, item in enumerate(v_scoped):
+    #         #     tf.print(f"v_scoped[{i}].shape:", tf.shape(item))
+    #         # tf.print("=" * 20)
+    #         v_interleaved = tf.concat([self.interleave(item) for item in v_scoped], axis=1)
+    #         v_odd, v_even = self.split_even_odd.call(v_interleaved)
+
+    #         v_xor = tf.math.floormod(v_odd + v_even, 2)
+    #         v_identity = tf.identity(v_even)
+    #         v_prime = self.interleave(tf.concat((v_xor, v_identity), axis=1))
+
+    #         # compute the embeddings in the next stage
+    #         e_scoped = tf.split(e, num_or_size_splits=N // scope, axis=1)
+    #         e_interleaved = tf.concat([self.interleave(item) for item in e_scoped], axis=1)
+    #         e_odd, e_even = self.split_even_odd.call(e_interleaved)
+
+    #         v_xor_emb = self.embedding_labels_nn(tf.squeeze(v_xor, axis=-1))
+    #         e1_left = self.checknode_nn.call(tf.concat((e_odd, e_even), axis=-1), training=training)
+    #         e1_right = self.bitnode_nn.call(tf.concat((e_odd, e_even, v_xor_emb), axis=-1), training=training)
+    #         e_prime = self.interleave(tf.concat((e1_left, e1_right), axis=1))
+
+
+    #         # compute loss and metrics
+    #         pred = self.emb2llr_nn.call(e_prime, training=training)
+    #         pred = tf.clip_by_value(pred, self.eps, 1 - self.eps)
+    #         loss = self.loss_fn(v_prime, pred)
+    #         norms = tf.norm(e_prime, ord='euclidean', axis=-1)
+
+    #         loss_array.append(loss)
+    #         pred_array.append(pred)
+    #         norm_array.append(norms)
+
+    #         v = v_prime
+    #         e = e_prime
+    #         scope *= 2
+    #     return tf.stack(loss_array, axis=-2), tf.stack(pred_array, axis=-2), tf.stack(norm_array, axis=-2)
 
     @tf.function
     def train_step(self, inputs):
@@ -199,6 +268,16 @@ class NeuralPolarDecoderOptimize(Model):
         self.opt_est = None
         self.opt_improve = None
 
+    def call(self, inputs):
+        batch, N = inputs.shape
+        x, _ = self.input_distribution.generate(
+            length=N,
+            batch_size=batch
+        )
+
+        loss_array_x, _, _ = self.npd_const((x, 2 * tf.ones_like(x)), training=True)
+        loss_array_y, _, _ = self.npd_channel((x, x), training=True)
+
     def compile(self, opt_est, opt_impr, **kwargs):
         super().compile(**kwargs)
         self.opt_est = opt_est
@@ -214,7 +293,6 @@ class NeuralPolarDecoderOptimize(Model):
         x = tf.stop_gradient(x)
         y = self.channel(x)
         with tf.GradientTape() as tape:
-
             loss_array_x, _, _ = self.npd_const((x, 2*tf.ones_like(y)), training=True)
             loss_array_y, _, _ = self.npd_channel((x, y), training=True)
             loss_est = tf.reduce_mean(loss_array_x + loss_array_y)
@@ -245,11 +323,20 @@ class NeuralPolarDecoderOptimize(Model):
 
             mi = tf.reduce_mean(ce_x - ce_y, axis=-1)
             mi_mean = tf.reduce_mean(mi)
+            # reward = mi - mi_mean
             reward = (mi - mi_mean) / (tf.math.sqrt( tf.reduce_mean( tf.square(mi - mi_mean )) + 1e-10))
+
+            # reward = tf.reduce_mean( tf.square(ce_x - ce_y - mi_mean )) * 0.1  # Regularization term to encourage polarization
+
+            # mi = ce_x - ce_y
+            # mi_mean = tf.reduce_mean(mi, axis=0, keepdims=True)
+            # reward_arg = (mi - mi_mean) / (tf.math.sqrt( tf.reduce_mean( tf.square(mi - mi_mean ), axis=0, keepdims=True) + 1e-10))
+            # reward = tf.reduce_mean(reward_arg, axis=-1)
 
             llr_x = tf.where(tf.equal(x, 1), llr_x1, -llr_x1)
             log_px = tf.math.log(tf.math.sigmoid(llr_x) + 1e-10)
-            log_px_N = tf.reduce_sum(log_px, axis=(1, 2))
+            log_px_N = tf.reduce_mean(log_px, axis=(1, 2)) 
+            # log_px_N = tf.reduce_sum(log_px, axis=(1, 2)) / tf.math.sqrt(tf.cast(N, tf.float32))
             loss_improve = tf.reduce_mean(-tf.stop_gradient(reward) * log_px_N)
 
         gradients = tape.gradient(loss_improve, self.input_distribution.trainable_weights)
@@ -264,6 +351,29 @@ class NeuralPolarDecoderOptimize(Model):
             'loss_est': loss_est / tf.math.log(2.0),
             'loss_improve': loss_improve,
         }
+        return res
+
+    @tf.function
+    def test_step(self, inputs):
+        batch, N = inputs.shape
+        x, _ = self.input_distribution.generate(
+            length=N,
+            batch_size=batch
+        )
+        y = self.channel(x)
+        inputs_tilde = x, 2 * tf.ones_like(y)
+        loss_array_x, _, _ = self.npd_const(inputs_tilde, training=False)
+        loss_array_y, _, _ = self.npd_channel((x, y), training=False)
+
+        ce_x = loss_array_x[:,-1,:] / tf.math.log(2.0)
+        ce_y = loss_array_y[:,-1,:] / tf.math.log(2.0)
+
+        self.synthetic_channel_entropy_metric_x.update_state(ce_x)
+        self.synthetic_channel_entropy_metric_y.update_state(ce_y)
+        res = {'ce_x': tf.reduce_mean(self.synthetic_channel_entropy_metric_x.result()),
+               'ce_y': tf.reduce_mean(self.synthetic_channel_entropy_metric_y.result()),
+               'mi': tf.reduce_mean(self.synthetic_channel_entropy_metric_x.result() - self.synthetic_channel_entropy_metric_y.result()),
+               }
         return res
 
     def build(self, input_shape):

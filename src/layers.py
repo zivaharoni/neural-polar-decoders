@@ -31,7 +31,7 @@ class NodeNN(Model):
         e = inputs
         for layer in self._layers:
             e = layer(e, training=training)
-            e = self.dropout(e, training=training)
+            # e = self.dropout(e, training=training)
         return e
 
     def get_config(self):

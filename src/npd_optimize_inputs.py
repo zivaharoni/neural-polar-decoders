@@ -10,7 +10,7 @@ from keras.optimizers import Adam
 from src.generators import info_bits_generator
 from src.models import NeuralPolarDecoderHondaYamamoto
 from src.builders import build_neural_polar_decoder_hy_synced_optimize
-from src.callbacks import ReduceLROnPlateauCustom
+from src.callbacks import ReduceLROnPlateauCustom, SaveModelCallback
 from src.utils import (save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels,
                        gpu_init, safe_wandb_init)
 from src.channels import Ising
@@ -40,6 +40,8 @@ def get_args():
                         help="MC length used for evaluation.")
     parser.add_argument("--save_name", type=str, default="model",
                         help="Model name used for saving.")
+    parser.add_argument("--load_path", type=str, default=None,
+                        help="Path to saved model to be loaded.")
     parser.add_argument("--npd_config_path", type=str, default="../configs/npd_small_config.json",
                         help="Path to npd configs.")
     parser.add_argument("--optimizer_estimation_config_path", type=str, default="../configs/optimizer_config.json",
@@ -84,11 +86,8 @@ else:
     raise ValueError(f"Invalid channel type: {args.channel}. Choose 'ising'.")
 
 #%% Build the model
-input_shape=(
-    (args.batch, args.N, 1),  # shape of x
-    (args.batch, args.N, 1)   # shape of y
-)
-npd = build_neural_polar_decoder_hy_synced_optimize(npd_config, input_shape, channel,  load_path=None)
+input_shape=(args.batch, args.N)
+npd = build_neural_polar_decoder_hy_synced_optimize(npd_config, input_shape, channel,  load_path=args.load_path)
 npd.compile(
             opt_est=Adam(learning_rate=optimizer_estimation_config["learning_rate"],
                          beta_1=optimizer_estimation_config["beta_1"],
@@ -117,21 +116,25 @@ lr_scheduler_improve = ReduceLROnPlateauCustom(monitor='mi',
                                                verbose=args.verbose,
                                                min_lr=optimizer_improvement_config['min_lr'],
                                                mode=optimizer_improvement_config['mode'],
-                                               optimizer=npd.opt_improve)
+                                               optimizer=npd.opt_improve,
+                                               stop_training=int(args.epochs * 0.9))
+
+save_callback = SaveModelCallback(save_path=model_full_path, save_freq=1)
+
 history = npd.fit(train_dataset,
                   epochs=args.epochs,
                   steps_per_epoch=args.steps_per_epoch,
-                  callbacks=[lr_scheduler_est, lr_scheduler_improve, WandbMetricsLogger()], verbose=args.verbose)
-
-#%% Save all weights, including the auxiliary RNN input
-os.makedirs(os.path.dirname(model_full_path), exist_ok=True)
-npd.save_weights(f"{model_full_path}")
+                  callbacks=[lr_scheduler_est, lr_scheduler_improve, WandbMetricsLogger(), save_callback], verbose=args.verbose)
 
 #%% Visualize the polarization of the synthetic channels
 arr = (npd.synthetic_channel_entropy_metric_x.result() -  npd.synthetic_channel_entropy_metric_y.result())
 visualize_synthetic_channels(arr, args.save_dir_path)
 
 #%% Discard the RNN inputs model
+input_shape=(
+    (args.batch, args.N, 1),  # shape of x
+    (args.batch, args.N, 1)   # shape of y
+)
 npd_hy = NeuralPolarDecoderHondaYamamoto(npd.npd_const, npd.npd_channel)
 npd_hy.build(input_shape)
 npd_hy.compile()
@@ -141,5 +144,5 @@ npd_hy((tf.zeros(shape=(args.batch, args.N, 1), dtype=tf.int32),
              tf.zeros(shape=(args.batch, args.N, 1), dtype=tf.float32)))
 npd_hy.save_weights(f"{model_path}")
 
-print("Training complete. Model saved to:", model_path)
+print("Training complete. Decoding Model saved to:", model_path)
 

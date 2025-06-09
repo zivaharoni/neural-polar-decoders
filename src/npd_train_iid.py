@@ -10,7 +10,7 @@ from wandb.integration.keras import WandbMetricsLogger
 from keras.optimizers import Adam
 from src.generators import iid_awgn_generator, iid_ising_generator
 from src.builders import build_neural_polar_decoder_iid_synced
-from src.callbacks import ReduceLROnPlateauCustom
+from src.callbacks import ReduceLROnPlateauCustom, SaveModelCallback
 from src.utils import (save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels,
                        gpu_init, safe_wandb_init)
 
@@ -19,7 +19,7 @@ print(f"TF version: {tf.__version__}")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 gpu_init(allow_growth=True)
 
-eager_mode = False
+eager_mode = True
 if eager_mode:
     print("Running in eager mode")
     tf.config.run_functions_eagerly(True)
@@ -104,10 +104,12 @@ train_dataset = tf.data.Dataset.from_generator(
 lr_scheduler = ReduceLROnPlateauCustom(monitor='ce', factor=optimizer_config["factor"],
                                        patience=optimizer_config["patience"], verbose=args.verbose,
                                        min_lr=optimizer_config["min_lr"], mode=optimizer_config["mode"])
+save_callback = SaveModelCallback(save_path=model_path, save_freq=1)
+
 history = npd.fit(train_dataset,
                   epochs=args.epochs,
                   steps_per_epoch=args.steps_per_epoch,
-                  callbacks=[lr_scheduler, WandbMetricsLogger()], verbose=args.verbose)
+                  callbacks=[lr_scheduler, WandbMetricsLogger(), save_callback], verbose=args.verbose)
 print("Training complete.")
 
 #%% MC evaluation of the ce rate

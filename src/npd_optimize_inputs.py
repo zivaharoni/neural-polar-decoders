@@ -87,7 +87,7 @@ else:
 
 #%% Build the model
 input_shape=(args.batch, args.N)
-npd = build_neural_polar_decoder_hy_synced_optimize(npd_config, input_shape, channel,  load_path=args.load_path)
+npd = build_neural_polar_decoder_hy_synced_optimize(npd_config, input_shape, channel,  load_path=args.load_path if len(args.load_path) > 0 else None)
 npd.compile(
             opt_est=Adam(learning_rate=optimizer_estimation_config["learning_rate"],
                          beta_1=optimizer_estimation_config["beta_1"],

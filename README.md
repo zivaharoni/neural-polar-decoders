@@ -87,8 +87,8 @@ bash ./runfiles/train-and-evaluate-iid-inputs.sh --channel ising --N 1024 --batc
 
 Train and evaluate an NPD on the Ising channel:
 ```bash
-bash ./runfiles/train-and-evaluate-optimize-inputs.sh --channel ising --N 1024 --batch 256 --model_size small \
-  --epochs 1000	--steps_per_epoch 1000 --mc_length 10000 --code_rate 0.4 --list_num 32 --threshold 0.0
+bash ./runfiles/train-and-evaluate-optimize-inputs.sh --channel ising --N 1024 --batch 32 --model_size small \
+  --epochs 1000	--steps_per_epoch 1000 --mc_length 10000 --code_rate 0.4 --list_num 32 --threshold 0.25
 ```
 
 Model and logs are saved under:
@@ -111,7 +111,7 @@ results/<save_dir>/<timestamp>/
 | Input Distribution |  N   |   MI    | SC FER | SCL FER |
 |:------------------:|:----:|:-------:|:------:|:-------:|
 |        iid         | 1024 | 0.4502  | 0.648  | 0.1900  |
-|     optimized      | 1024 | 0.541  | 0.908  | 0.023   |
+|     optimized      | 1024 | 0.541   | 0.908  | 0.023   |
 
 
 ## Notes

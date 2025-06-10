@@ -7,9 +7,9 @@ import numpy as np
 import tensorflow as tf
 import wandb
 from wandb.integration.keras import WandbMetricsLogger
-from src.polar import SCEncoder, SCEncoderArithmetic, SCDecoderHY, PolarCodeConstructionHY, PolarCodeHY, PolarCodeHYArithmetic, SCLDecoderHY
+from src.polar import SCEncoder, SCDecoderHY, PolarCodeConstructionHY, PolarCodeHY, SCLDecoderHY
 from src.channels import Ising
-from src.generators import info_bits_generator,  custom_dataset
+from src.generators import info_bits_generator
 from src.builders import build_neural_polar_decoder_hy_synced
 from src.utils import (save_args_to_json, load_json, print_config_summary, visualize_synthetic_channels,
                        gpu_init, safe_wandb_init)

@@ -211,14 +211,12 @@ class SCDecoder(Model):
 
         # Compute soft mapping back one stage
         u1est = self.decoder.checknode_nn.call(tf.concat((e_odd, e_even), axis=-1), training=False)
-        # u1est = self.layer_norms[layer_norm_pointer](u1est, training=False)
         # R_N^T maps u1est to top polar code
         uhat1, u1hardprev, p_uy_left = self.decode(u1est, f_left, N // 2)
         u_emb = self.decoder.embedding_labels_nn(tf.squeeze(u1hardprev, axis=-1))
 
         # Using u1est and x1hard, we can estimate u2
         u2est = self.decoder.bitnode_nn.call(tf.concat((e_odd, e_even, u_emb), axis=-1), training=False)
-        # u2est = self.layer_norms[layer_norm_pointer](u2est, training=False)
 
         # R_N^T maps u2est to bottom polar code
         uhat2, u2hardprev, p_uy_right = self.decode(u2est, f_right, N // 2)
@@ -285,10 +283,8 @@ class SCLDecoder(SCDecoder):
             llr = tf.expand_dims(llr, axis=-1)
             hd_ = tf.squeeze(self.hard_decision.call(dm), axis=(2, 3))
             hd_ = tf.cast(hd_, dtype=tf.int32)
-            # print(hd_.shape)
 
             hd = tf.concat((hd_, 1 - hd_), axis=1)
-            # print(hd.shape)
 
             pm_dup = tf.concat((pm, pm + tf.abs(tf.squeeze(llr, axis=(2, 3)))), -1)
             pm_prune, prune_idx_ = tf.math.top_k(-pm_dup, k=nL, sorted=True)
@@ -297,10 +293,8 @@ class SCLDecoder(SCDecoder):
             idx = tf.argsort(prune_idx_, axis=1)
             pm_prune = tf.gather(pm_prune, idx, axis=1, batch_dims=1)
             u_survived = tf.gather(hd, prune_idx, axis=1, batch_dims=1)[:, :, tf.newaxis, tf.newaxis]
-            # print(u_survived.shape)
             is_frozen = tf.not_equal(f, 2)
             x = tf.where(is_frozen, frozen, u_survived)
-            # print(is_frozen.shape, frozen.shape)
 
             pm_ = tf.where(tf.squeeze(is_frozen, axis=(2, 3)),
                            pm + tf.abs(tf.squeeze(llr, axis=(2, 3))) *
@@ -321,7 +315,7 @@ class SCLDecoder(SCDecoder):
         # Compute soft mapping back one stage
         ey1est = self.decoder.checknode_nn.call(tf.concat((ey_odd, ey_even), axis=-1))
         shape = ey1est.shape
-        # ey1est = self.layer_norms[layer_norm_pointer](tf.reshape(ey1est, [-1, shape[-2], shape[-1]]), training=False)
+
         ey1est = tf.reshape(ey1est, shape)
         # R_N^T maps u1est to top polar code
         uhat1, u1hardprev, llr_uy_left, pm, new_order = self.decode(ey1est, f_left, pm,
@@ -380,9 +374,7 @@ class SCDecoderHY(Model):
             p_u = self.encoder.emb2llr_nn(e_co, training=False)
             p_uy = self.decoder.emb2llr_nn(e_ch, training=False)
             hard_decision_u = tf.cast(r > p_u[..., 0], tf.int32)[..., None]
-            # hard_decision_u = f
-            # arg = tf.math.log(p_uy+1e-10) - tf.math.log(p_u+1e-10)
-            # hard_decision_uy = tf.cast(tf.argmax(arg, axis=-1)[...,None], dtype=tf.int32)
+
             hard_decision_uy = tf.cast(tf.argmax(p_uy, axis=-1)[...,None], dtype=tf.int32)
             u = tf.where(tf.equal(f, 2), hard_decision_uy, hard_decision_u)
             x = tf.identity(u)
@@ -520,7 +512,6 @@ class SCLDecoderHY(SCDecoderHY):
         u1est_ch = self.decoder.checknode_nn.call(tf.concat((e_ch_odd, e_ch_even), axis=-1), training=False)
 
         shape = u1est_ch.shape
-        # ey1est = self.layer_norms[layer_norm_pointer](tf.reshape(ey1est, [-1, shape[-2], shape[-1]]), training=False)
         # R_N^T maps u1est to top polar code
         uhat1, u1hardprev,  p_uy_left, p_u_left, pm, new_order = self.decode(u1est_co, u1est_ch, f_left, pm,
                                                                          N // 2, r_left, sample=sample)

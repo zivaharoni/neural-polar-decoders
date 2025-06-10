@@ -57,6 +57,7 @@ python src/npd_optimize_inputs.py \
     --channel "$CHANNEL" \
     --batch "$BATCH" \
     --N "$N" \
+    --load_path "$LOAD_PATH" \
     --epochs "$EPOCHS" \
     --steps_per_epoch "$STEPS_PER_EPOCH" \
     --mc_length "$MC_LENGTH" \
